@@ -308,28 +308,21 @@ def run_health_check() -> HealthCheckResult:
     return result
 
 
-def main():
-    """Main entry point."""
-    # Parse command line arguments
-    parser = argparse.ArgumentParser(description="ADW System Health Check")
-    parser.add_argument(
-        "issue_number",
-        nargs="?",
-        help="Optional GitHub issue number to post results to",
-    )
-    args = parser.parse_args()
-
+def _print_health_check_header() -> None:
+    """Print the header message when starting health check."""
     print("🏥 Running ADW System Health Check...\n")
 
-    result = run_health_check()
 
-    # Print summary
+def _print_overall_status_summary(result: HealthCheckResult) -> None:
+    """Print overall health status and timestamp."""
     print(
         f"{'✅' if result.success else '❌'} Overall Status: {'HEALTHY' if result.success else 'UNHEALTHY'}"
     )
     print(f"📅 Timestamp: {result.timestamp}\n")
 
-    # Print detailed results
+
+def _print_detailed_check_results(result: HealthCheckResult) -> None:
+    """Print detailed results for each individual check."""
     print("📋 Check Results:")
     print("-" * 50)
 
@@ -350,19 +343,25 @@ def main():
         if check_result.warning:
             print(f"   ⚠️  Warning: {check_result.warning}")
 
-    # Print warnings
+
+def _print_warnings_section(result: HealthCheckResult) -> None:
+    """Print all warnings if any exist."""
     if result.warnings:
         print("\n⚠️  Warnings:")
         for warning in result.warnings:
             print(f"   - {warning}")
 
-    # Print errors
+
+def _print_errors_section(result: HealthCheckResult) -> None:
+    """Print all errors if any exist."""
     if result.errors:
         print("\n❌ Errors:")
         for error in result.errors:
             print(f"   - {error}")
 
-    # Print next steps
+
+def _print_next_steps_section(result: HealthCheckResult) -> None:
+    """Print recommended next steps if health check failed."""
     if not result.success:
         print("\n📝 Next Steps:")
         if any("ANTHROPIC_API_KEY" in e for e in result.errors):
@@ -377,16 +376,45 @@ def main():
                 "   5. Fork/clone the repository and update git remote to your own repo"
             )
 
+
+def _post_health_check_results_to_issue(
+    issue_number: str, result: HealthCheckResult
+) -> None:
+    """Post health check results as a comment on the specified GitHub issue."""
+    print(f"\n📤 Posting health check results to issue #{issue_number}...")
+    status_emoji = "✅" if result.success else "❌"
+    comment = f"{status_emoji} Health check completed: {'HEALTHY' if result.success else 'UNHEALTHY'}"
+    try:
+        make_issue_comment(issue_number, comment)
+        print(f"✅ Posted health check comment to issue #{issue_number}")
+    except Exception as e:
+        print(f"❌ Failed to post comment: {e}")
+
+
+def main():
+    """Main entry point."""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="ADW System Health Check")
+    parser.add_argument(
+        "issue_number",
+        nargs="?",
+        help="Optional GitHub issue number to post results to",
+    )
+    args = parser.parse_args()
+
+    _print_health_check_header()
+
+    result = run_health_check()
+
+    _print_overall_status_summary(result)
+    _print_detailed_check_results(result)
+    _print_warnings_section(result)
+    _print_errors_section(result)
+    _print_next_steps_section(result)
+
     # If issue number provided, post comment
     if args.issue_number:
-        print(f"\n📤 Posting health check results to issue #{args.issue_number}...")
-        status_emoji = "✅" if result.success else "❌"
-        comment = f"{status_emoji} Health check completed: {'HEALTHY' if result.success else 'UNHEALTHY'}"
-        try:
-            make_issue_comment(args.issue_number, comment)
-            print(f"✅ Posted health check comment to issue #{args.issue_number}")
-        except Exception as e:
-            print(f"❌ Failed to post comment: {e}")
+        _post_health_check_results_to_issue(args.issue_number, result)
 
     # Return appropriate exit code
     sys.exit(0 if result.success else 1)
