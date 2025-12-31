@@ -25,6 +25,7 @@ import sys
 import json
 import subprocess
 import tempfile
+import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 from pathlib import Path
@@ -38,6 +39,17 @@ from github import get_repo_url, extract_repo_path, make_issue_comment
 
 # Load environment variables
 load_dotenv()
+
+# Configure logging to output to stdout with minimal formatting
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(message)s',
+    stream=sys.stdout,
+    force=True
+)
+
+# Create logger instance
+logger = logging.getLogger(__name__)
 
 
 class CheckResult(BaseModel):
@@ -308,6 +320,89 @@ def run_health_check() -> HealthCheckResult:
     return result
 
 
+def _print_health_check_header() -> None:
+    """Print the header message when starting health check."""
+    logger.info("🏥 Running ADW System Health Check...\n")
+
+
+def _print_overall_status_summary(result: HealthCheckResult) -> None:
+    """Print overall health status and timestamp."""
+    logger.info(
+        f"{'✅' if result.success else '❌'} Overall Status: {'HEALTHY' if result.success else 'UNHEALTHY'}"
+    )
+    logger.info(f"📅 Timestamp: {result.timestamp}\n")
+
+
+def _print_detailed_check_results(result: HealthCheckResult) -> None:
+    """Print detailed results for each individual check."""
+    logger.info("📋 Check Results:")
+    logger.info("-" * 50)
+
+    for check_name, check_result in result.checks.items():
+        status = "✅" if check_result.success else "❌"
+        logger.info(f"\n{status} {check_name.replace('_', ' ').title()}:")
+
+        # Print check-specific details
+        for key, value in check_result.details.items():
+            if value is not None and key not in [
+                "missing_required",
+                "missing_optional",
+            ]:
+                logger.info(f"   {key}: {value}")
+
+        if check_result.error:
+            logger.error(f"   ❌ Error: {check_result.error}")
+        if check_result.warning:
+            logger.warning(f"   ⚠️  Warning: {check_result.warning}")
+
+
+def _print_warnings_section(result: HealthCheckResult) -> None:
+    """Print all warnings if any exist."""
+    if result.warnings:
+        logger.warning("\n⚠️  Warnings:")
+        for warning in result.warnings:
+            logger.warning(f"   - {warning}")
+
+
+def _print_errors_section(result: HealthCheckResult) -> None:
+    """Print all errors if any exist."""
+    if result.errors:
+        logger.error("\n❌ Errors:")
+        for error in result.errors:
+            logger.error(f"   - {error}")
+
+
+def _print_next_steps_section(result: HealthCheckResult) -> None:
+    """Print recommended next steps if health check failed."""
+    if not result.success:
+        logger.info("\n📝 Next Steps:")
+        if any("ANTHROPIC_API_KEY" in e for e in result.errors):
+            logger.info("   1. Set ANTHROPIC_API_KEY in your .env file")
+        if any("GITHUB_PAT" in e for e in result.errors):
+            logger.info("   2. Set GITHUB_PAT in your .env file")
+        if any("GitHub CLI" in e for e in result.errors):
+            logger.info("   3. Install GitHub CLI: brew install gh")
+            logger.info("   4. Authenticate: gh auth login")
+        if any("disler" in w for w in result.warnings):
+            logger.info(
+                "   5. Fork/clone the repository and update git remote to your own repo"
+            )
+
+
+def _post_health_check_results_to_issue(
+    issue_number: str, result: HealthCheckResult
+) -> None:
+    """Post health check results as a comment on the specified GitHub issue."""
+    logger.info(f"\n📤 Posting health check results to issue #{issue_number}...")
+    status_emoji = "✅" if result.success else "❌"
+    comment = f"{status_emoji} Health check completed: {'HEALTHY' if result.success else 'UNHEALTHY'}"
+    try:
+        make_issue_comment(issue_number, comment)
+        logger.info(f"✅ Posted health check comment to issue #{issue_number}")
+    except Exception as e:
+        logger.error(f"❌ Failed to post comment: {e}")
+
+
 def main():
     """Main entry point."""
     # Parse command line arguments
@@ -319,74 +414,19 @@ def main():
     )
     args = parser.parse_args()
 
-    print("🏥 Running ADW System Health Check...\n")
+    _print_health_check_header()
 
     result = run_health_check()
 
-    # Print summary
-    print(
-        f"{'✅' if result.success else '❌'} Overall Status: {'HEALTHY' if result.success else 'UNHEALTHY'}"
-    )
-    print(f"📅 Timestamp: {result.timestamp}\n")
-
-    # Print detailed results
-    print("📋 Check Results:")
-    print("-" * 50)
-
-    for check_name, check_result in result.checks.items():
-        status = "✅" if check_result.success else "❌"
-        print(f"\n{status} {check_name.replace('_', ' ').title()}:")
-
-        # Print check-specific details
-        for key, value in check_result.details.items():
-            if value is not None and key not in [
-                "missing_required",
-                "missing_optional",
-            ]:
-                print(f"   {key}: {value}")
-
-        if check_result.error:
-            print(f"   ❌ Error: {check_result.error}")
-        if check_result.warning:
-            print(f"   ⚠️  Warning: {check_result.warning}")
-
-    # Print warnings
-    if result.warnings:
-        print("\n⚠️  Warnings:")
-        for warning in result.warnings:
-            print(f"   - {warning}")
-
-    # Print errors
-    if result.errors:
-        print("\n❌ Errors:")
-        for error in result.errors:
-            print(f"   - {error}")
-
-    # Print next steps
-    if not result.success:
-        print("\n📝 Next Steps:")
-        if any("ANTHROPIC_API_KEY" in e for e in result.errors):
-            print("   1. Set ANTHROPIC_API_KEY in your .env file")
-        if any("GITHUB_PAT" in e for e in result.errors):
-            print("   2. Set GITHUB_PAT in your .env file")
-        if any("GitHub CLI" in e for e in result.errors):
-            print("   3. Install GitHub CLI: brew install gh")
-            print("   4. Authenticate: gh auth login")
-        if any("disler" in w for w in result.warnings):
-            print(
-                "   5. Fork/clone the repository and update git remote to your own repo"
-            )
+    _print_overall_status_summary(result)
+    _print_detailed_check_results(result)
+    _print_warnings_section(result)
+    _print_errors_section(result)
+    _print_next_steps_section(result)
 
     # If issue number provided, post comment
     if args.issue_number:
-        print(f"\n📤 Posting health check results to issue #{args.issue_number}...")
-        status_emoji = "✅" if result.success else "❌"
-        comment = f"{status_emoji} Health check completed: {'HEALTHY' if result.success else 'UNHEALTHY'}"
-        try:
-            make_issue_comment(args.issue_number, comment)
-            print(f"✅ Posted health check comment to issue #{args.issue_number}")
-        except Exception as e:
-            print(f"❌ Failed to post comment: {e}")
+        _post_health_check_results_to_issue(args.issue_number, result)
 
     # Return appropriate exit code
     sys.exit(0 if result.success else 1)
